@@ -38,6 +38,7 @@ for the raw Tyrant protocol::
 """
 import itertools
 import math
+import time
 import socket
 import struct
 import UserDict
@@ -51,7 +52,6 @@ __all__ = [
 
 class TyrantError(Exception):
     pass
-
 
 DEFAULT_PORT = 1978
 MAGIC = 0xc8
@@ -204,13 +204,12 @@ def _tDouble(code, key, integ, fract):
 def socksend(sock, lst):
     sock.sendall(''.join(lst))
 
-
 def sockrecv(sock, bytes):
     d = ''
     while len(d) < bytes:
         c = sock.recv(min(8192, bytes - len(d)))
         if not c:
-            raise TyrantError('Connection closed')
+            raise socket.error('Connection closed')
         d += c
     return d
 
@@ -613,32 +612,58 @@ class PyTableTyrant(PyTyrant):
     search = property(_search)
 
 
+def retry(method):
+    def f_retry(self, *args, **kvargs):
+        tries, delay, backoff = 5, 1, 2
+        while tries > 0:
+            try:
+                if tries<5:
+                    self.connect()
+                return method(self, *args, **kvargs)
+            except socket.error:
+                pass
+            time.sleep(delay)
+            tries -= 1
+            delay *= backoff
+        raise
+    return f_retry
+
 class Tyrant(object):
+
     @classmethod
     def open(cls, host='127.0.0.1', port=DEFAULT_PORT):
-        sock = socket.socket()
-        sock.connect((host, port))
-        sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
-        return cls(sock)
+        cls.host, cls.port = host, port
+        return cls(host=host, port=port).connect()
 
-    def __init__(self, sock):
-        self.sock = sock
+    def connect(self):
+        self.sock = socket.socket()
+        self.sock.connect((self.host, self.port))
+        self.sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        return self
+
+    def __init__(self, sock=None, host='127.0.0.1', port=DEFAULT_PORT):
+        self.sock = sock or socket.socket()
+        self.host = host
+        self.port = port
 
     def close(self):
         self.sock.close()
 
+    @retry
     def put(self, key, value):
         """Unconditionally set key to value
         """
         socksend(self.sock, _t2(C.put, key, value))
         socksuccess(self.sock)
 
+    @retry
     def putkeep(self, key, value):
         """Set key to value if key does not already exist
         """
         socksend(self.sock, _t2(C.putkeep, key, value))
         socksuccess(self.sock)
 
+    @retry
     def putcat(self, key, value):
         """Append value to the existing value for key, or set key to
         value if it does not already exist
@@ -646,6 +671,7 @@ class Tyrant(object):
         socksend(self.sock, _t2(C.putcat, key, value))
         socksuccess(self.sock)
 
+    @retry
     def putshl(self, key, value, width):
         """Equivalent to::
 
@@ -655,17 +681,20 @@ class Tyrant(object):
         socksend(self.sock, _t2W(C.putshl, key, value, width))
         socksuccess(self.sock)
 
+    @retry
     def putnr(self, key, value):
         """Set key to value without waiting for a server response
         """
         socksend(self.sock, _t2(C.putnr, key, value))
 
+    @retry
     def out(self, key):
         """Remove key from server
         """
         socksend(self.sock, _t1(C.out, key))
         socksuccess(self.sock)
 
+    @retry
     def get(self, key):
         """Get the value of a key from the server
         """
@@ -681,11 +710,13 @@ class Tyrant(object):
             k, v = sockstrpair(self.sock)
             yield k, v
 
+    @retry
     def mget(self, klst):
         """Get key,value pairs from the server for the given list of keys
         """
         return list(self._mget(klst))
 
+    @retry
     def vsiz(self, key):
         """Get the size of a value for key
         """
@@ -693,12 +724,14 @@ class Tyrant(object):
         socksuccess(self.sock)
         return socklen(self.sock)
 
+    @retry
     def iterinit(self):
         """Begin iteration over all keys of the database
         """
         socksend(self.sock, _t0(C.iterinit))
         socksuccess(self.sock)
 
+    @retry
     def iternext(self):
         """Get the next key after iterinit
         """
@@ -713,16 +746,19 @@ class Tyrant(object):
         for i in xrange(numkeys):
             yield sockstr(self.sock)
 
+    @retry
     def fwmkeys(self, prefix, maxkeys):
         """Get up to the first maxkeys starting with prefix
         """
         return list(self._fwmkeys(prefix, maxkeys))
 
+    @retry
     def addint(self, key, num):
         socksend(self.sock, _t1M(C.addint, key, num))
         socksuccess(self.sock)
         return socklen(self.sock)
 
+    @retry
     def adddouble(self, key, num):
         fracpart, intpart = math.modf(num)
         fracpart, intpart = int(fracpart * 1e12), int(intpart)
@@ -730,6 +766,7 @@ class Tyrant(object):
         socksuccess(self.sock)
         return sockdouble(self.sock)
 
+    @retry
     def ext(self, func, opts, key, value):
         # tcrdbext opts are RDBXOLCKREC, RDBXOLCKGLB
         """Call func(key, value) with opts
@@ -740,36 +777,42 @@ class Tyrant(object):
         socksuccess(self.sock)
         return sockstr(self.sock)
 
+    @retry
     def sync(self):
         """Synchronize the database
         """
         socksend(self.sock, _t0(C.sync))
         socksuccess(self.sock)
 
+    @retry
     def vanish(self):
         """Remove all records
         """
         socksend(self.sock, _t0(C.vanish))
         socksuccess(self.sock)
 
+    @retry
     def copy(self, path):
         """Hot-copy the database to path
         """
         socksend(self.sock, _t1(C.copy, path))
         socksuccess(self.sock)
 
+    @retry
     def restore(self, path, msec):
         """Restore the database from path at timestamp (in msec)
         """
         socksend(self.sock, _t1R(C.copy, path, msec))
         socksuccess(self.sock)
 
+    @retry
     def setmst(self, host, port):
         """Set master to host:port
         """
         socksend(self.sock, _t1M(C.setmst, host, port))
         socksuccess(self.sock)
 
+    @retry
     def rnum(self):
         """Get the number of records in the database
         """
@@ -777,6 +820,7 @@ class Tyrant(object):
         socksuccess(self.sock)
         return socklong(self.sock)
 
+    @retry
     def size(self):
         """Get the size of the database
         """
@@ -784,6 +828,7 @@ class Tyrant(object):
         socksuccess(self.sock)
         return socklong(self.sock)
 
+    @retry
     def stat(self):
         """Get some statistics about the database
         """
@@ -801,6 +846,7 @@ class Tyrant(object):
         for i in xrange(numrecs):
             yield sockstr(self.sock)
 
+    @retry
     def misc(self, func, opts, args):
         """All databases support "putlist", "outlist", and "getlist".
         "putlist" is to store records. It receives keys and values one after the other, and returns an empty list.
