@@ -157,7 +157,7 @@ def _t1R(code, key, msec):
 
 def _t1M(code, key, count):
     return [
-        struct.pack('>BBII', MAGIC, code, len(key), count),
+        struct.pack('>BBIi', MAGIC, code, len(key), count),
         key,
     ]
 
