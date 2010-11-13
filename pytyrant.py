@@ -583,6 +583,8 @@ class PyTableTyrant(PyTyrant):
         opts = (no_update_log and RDBMONOULOG or 0)
         if not isinstance(keys, (list, tuple)):
             keys = list(keys)
+        if len(keys) == 0:
+            return []
         rval = self.t.misc("getlist", opts, keys)
         if len(rval) <= len(keys):
             # 1.1.10 protocol, may return invalid results
