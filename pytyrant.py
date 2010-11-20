@@ -65,6 +65,9 @@ RDBQOSTRASC, RDBQOSTRDESC, RDBQONUMASC, RDBQONUMDESC = range(4)
 # Enumeration for index types (from tcrdb.h, tctdb.h)
 RDBITLEXICAL = TDBITLEXICAL = 0    # Lexical string
 RDBITDECIMAL = TDBITDECIMAL = 1    # Decimal string
+RDBITTOKEN = TDBITTOKEN = 2        # Token inverted index
+RDBITQGRAM = TDBITQGRAM = 3        # Q-gram inverted index
+
 RDBITOPT = TDBITOPT = 9998,        # Optimize
 RDBITVOID = TDBITVOID = 9999,      # Void
 RDBITKEEP = TDBITKEEP = 1 << 24    # Keep existing index
